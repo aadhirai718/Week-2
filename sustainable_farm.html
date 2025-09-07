@@ -1,0 +1,681 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Sustainable Field — Continuous Planting Game</title>
+<style>
+  :root{
+    --bg-top:#dff3e6; --bg-bot:#f7fff6; --accent:#1b6e2b; --panel:#ffffff;
+  }
+  html,body{height:100%;margin:0;font-family:Inter,system-ui,Arial;background:linear-gradient(var(--bg-top),var(--bg-bot));}
+  .wrap{max-width:1300px;margin:16px auto;padding:12px;background:var(--panel);border-radius:12px;box-shadow:0 16px 40px rgba(0,0,0,0.06)}
+  header{display:flex;justify-content:space-between;align-items:center;gap:8px}
+  .title{font-weight:800;color:var(--accent);font-size:20px}
+  .sub{font-size:13px;color:#4f6b4f}
+  .controls{display:flex;gap:8px;align-items:center}
+  button{background:var(--accent);color:white;border:0;padding:8px 12px;border-radius:8px;cursor:pointer}
+  button.alt{background:#4f8e4f}
+  .layout{display:flex;gap:12px;margin-top:12px}
+  .left{flex:1}
+  .right{width:360px}
+  canvas{display:block;width:100%;height:auto;border-radius:10px;background:linear-gradient(#dff9db,#f9fff8)}
+  .panel{background:linear-gradient(#fff,#f7fff7);padding:10px;border-radius:10px;margin-bottom:10px}
+  .badge{background:#fbfff8;padding:8px;border-radius:8px;display:inline-block;margin-right:6px}
+  .small{font-size:13px;color:#516b50}
+  .ach{padding:8px;border-radius:8px;background:#f6fff6;border:1px dashed #d6f0d6;margin-bottom:6px}
+  .lb-item{display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px dashed #eef7ee}
+  input[type="text"]{padding:8px;border-radius:8px;border:1px solid #e6f6e6;width:100%}
+  .footer{display:flex;justify-content:space-between;align-items:center;margin-top:12px;font-size:13px;color:#476a47}
+  .muted{color:#6b7f6b;font-size:13px}
+  code.small{background:#f2fff2;padding:4px;border-radius:4px}
+  @media (max-width:980px){ .layout{flex-direction:column} .right{width:100%} }
+</style>
+</head>
+<body>
+  <div class="wrap" role="application" aria-label="Sustainable Field Game">
+    <header>
+      <div>
+        <div class="title">Sustainable Field — Planting in a Continuous Field</div>
+        <div class="sub">Walk freely, plant anywhere, use compost & water — seasons and pests make it challenging.</div>
+      </div>
+      <div class="controls">
+        <button id="btn-sound">Sound: ON</button>
+        <button id="btn-save" class="alt">Save</button>
+      </div>
+    </header>
+
+    <div class="layout">
+      <div class="left">
+        <canvas id="game" width="1100" height="650" aria-label="Game canvas"></canvas>
+
+        <div style="margin-top:8px">
+          <span class="badge" id="moneyBadge">Money: $0</span>
+          <span class="badge" id="dayBadge">Day: 1</span>
+          <span class="badge" id="timeBadge">Time: 08:00</span>
+          <span class="badge" id="seasonBadge">Season: Spring</span>
+          <span class="badge" id="seedBadge">Selected: [1] Wheat</span>
+          <span class="badge" id="toolBadge">Tool: HAND</span>
+        </div>
+
+        <div class="panel" style="margin-top:8px">
+          <strong>Controls</strong>
+          <div class="small" style="margin-top:6px">
+            Move: <code class="small">W A S D</code> or arrows • Plant: <code class="small">E</code> • Compost: <code class="small">Shift+E</code> • Water: <code class="small">F</code> • Harvest: <code class="small">H</code> • Pesticide (aim & right-click) • 1–6 select crop • Space pause • S toggle sound
+          </div>
+        </div>
+      </div>
+
+      <div class="right">
+        <div class="panel">
+          <div style="font-weight:700;margin-bottom:8px">Crops (choose with 1–6)</div>
+          <div id="cropList"></div>
+        </div>
+
+        <div class="panel">
+          <div style="font-weight:700">Achievements</div>
+          <div id="achList" style="margin-top:8px"></div>
+        </div>
+
+        <div class="panel">
+          <div style="font-weight:700">Leaderboard</div>
+          <input id="playerName" placeholder="Your name" style="margin-top:8px" />
+          <div style="display:flex;gap:8px;margin-top:8px">
+            <button id="submitScore">Submit</button>
+            <button id="clearLB" class="alt">Clear</button>
+          </div>
+          <div id="leaderboard" style="margin-top:8px"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="footer">
+      <div class="muted">This is a single-file game. It auto-saves locally.</div>
+      <div class="muted">Sustainable choices like compost reduce pesticide use and speed growth.</div>
+    </div>
+  </div>
+
+<script>
+/* Sustainable Field — single-file continuous-field planting game
+   - Player moves freely across a continuous field (no tiles)
+   - Plant at any (x,y), crop grows as a circle radius
+   - Water, compost, pesticide, seasons & pests
+   - Particles/animations and WebAudio procedural sounds
+   - Save/load, achievements, leaderboard (localStorage)
+*/
+
+// -------------------- Canvas & Setup --------------------
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+const W = canvas.width, H = canvas.height;
+
+// UI elements
+const moneyBadge = document.getElementById('moneyBadge');
+const dayBadge = document.getElementById('dayBadge');
+const timeBadge = document.getElementById('timeBadge');
+const seasonBadge = document.getElementById('seasonBadge');
+const seedBadge = document.getElementById('seedBadge');
+const toolBadge = document.getElementById('toolBadge');
+
+const SAVE_KEY = 'sust_field_save_v1';
+const LB_KEY = 'sust_field_lb_v1';
+
+// -------------------- Game Constants --------------------
+const SEEDS = {
+  1: {name:'Wheat',  baseGrow: 50, waterNeed: 3, yield:5, price:7, color:'#e2c07a'},
+  2: {name:'Bean',   baseGrow: 38, waterNeed: 4, yield:4, price:9, color:'#7bdc82'},
+  3: {name:'Herb',   baseGrow: 26, waterNeed: 2, yield:2, price:5, color:'#7fc9f2', passive:true},
+  4: {name:'Rice',   baseGrow:110, waterNeed: 5, yield:12, price:12, color:'#f2e6b8'},
+  5: {name:'Tomato', baseGrow:70,  waterNeed: 4, yield:7, price:10, color:'#f28b82'},
+  6: {name:'Coffee', baseGrow:180, waterNeed: 6, yield:20, price:20, color:'#7a4b3a'}
+};
+
+const SEASONS = ['Spring','Summer','Autumn','Winter'];
+
+// -------------------- Game State --------------------
+let state = {
+  money: 70,
+  day: 1,
+  time: 8.0, // hour
+  seasonIndex: 0,
+  selectedSeed: 1,
+  tool: 'HAND', // HAND, WATER, PEST
+  paused: false,
+  mode: 'challenging',
+  totalHarvestValue: 0,
+  herbsHarvested: 0
+};
+
+// -------------------- Player --------------------
+const player = {
+  x: W/2, y: H/2 + 80, vx:0, vy:0,
+  speed: 160,
+  lastPlantTime: 0,
+  facingAngle: 0
+};
+
+// -------------------- Crop Objects --------------------
+class Crop {
+  constructor(x,y,seedId){
+    this.x = x; this.y = y;
+    this.seedId = seedId;
+    this.plantTs = performance.now()/1000;
+    this.radius = 4;            // visual size grows with time
+    this.growth = 0;            // 0..1
+    this.water = 0;             // water units
+    this.compost = 0;           // compost units
+    this.health = 100;          // 0..100
+    this.pest = false;
+    this.ready = false;
+    this.harvests = 0;
+  }
+  update(dt, weatherRain){
+    // season multipliers
+    const season = SEASONS[state.seasonIndex];
+    let seasonFactor = 1.0;
+    if(season === 'Winter') seasonFactor = 1.25;   // slower
+    if(season === 'Summer') seasonFactor = 0.92;  // slightly faster
+    const seed = SEEDS[this.seedId];
+    const base = seed.baseGrow * seasonFactor;
+    const speedFactor = 1 + state.upgradeLevel * 0.12;
+    const compostBoost = 1 + this.compost * 0.06;
+    // rain waters
+    if(weatherRain) this.water += 0.5 * dt;
+    const need = seed.waterNeed * (1 + this.growth * 0.6);
+    // health effect of water
+    if(this.water < need) this.health -= 0.6 * dt;
+    else this.health = Math.min(100, this.health + 0.08 * dt);
+    if(this.pest) this.health -= 1.5 * dt;
+    if(this.health <= 0){
+      // crop died
+      this.dead = true;
+      return;
+    }
+    // growth update
+    const elapsed = (performance.now()/1000) - this.plantTs;
+    const required = base / (speedFactor * compostBoost);
+    const pct = Math.min(1, elapsed / required);
+    this.growth = pct;
+    this.radius = 4 + pct * 18;
+    if(pct > 0.98) this.ready = true;
+    // pest chance
+    const pestBase = (state.mode === 'easy') ? 0.0005 : 0.0018;
+    if(Math.random() < pestBase * (1 + state.day/40)) this.pest = true;
+    // passive herb income
+    if(seed.passive && this.growth > 0.5 && !this.ready && Math.random() < 0.0009) state.money += 0.25;
+  }
+  harvest(){
+    if(!this.ready) return 0;
+    const seed = SEEDS[this.seedId];
+    const qty = seed.yield + this.compost;
+    const gain = qty * seed.price;
+    state.money += gain;
+    state.totalHarvestValue += gain;
+    if(this.seedId === 3) state.herbsHarvested += qty;
+    this.harvests++;
+    this.dead = true; // one-time harvest for simplicity
+    return gain;
+  }
+}
+
+// crops list
+const crops = [];
+
+// -------------------- Particles --------------------
+const particles = [];
+function spawnParticles(type,x,y,count=12){
+  for(let i=0;i<count;i++){
+    particles.push({
+      type, x, y,
+      vx: rand(-160,160)/60, vy: rand(-260,-40)/60,
+      life: rand(0.6,1.6),
+      size: rand(2,4),
+      color: type==='water' ? 'rgba(90,140,230,0.9)' : (type==='plant'?'rgba(120,220,80,0.95)':'#fff2c3')
+    });
+  }
+}
+function updateParticles(dt){
+  for(let i=particles.length-1;i>=0;i--){
+    const p = particles[i];
+    p.x += p.vx * dt * 60;
+    p.y += p.vy * dt * 60;
+    p.vy += 40 * dt;
+    p.life -= dt;
+    if(p.life <= 0) particles.splice(i,1);
+  }
+}
+
+// -------------------- Weather & Season --------------------
+let weather = { rain:false, nextChange: performance.now()/1000 + rand(10,24) };
+function updateWeather(now){
+  if(now >= weather.nextChange){
+    const prob = (state.mode === 'easy') ? 0.36 : 0.52;
+    weather.rain = Math.random() < prob;
+    weather.nextChange = now + rand(10,30);
+    if(weather.rain) playSound('rain', {loop:true}); else stopLoop('rain');
+  }
+}
+function nextSeason(){
+  state.seasonIndex = (state.seasonIndex + 1) % SEASONS.length;
+}
+
+// -------------------- Moving objects (clouds, birds) --------------------
+const clouds = [], birds = [];
+function spawnCloud(){ clouds.push({x:-200 + rand(-50,0), y:rand(30,120), w:rand(120,360), speed:rand(6,10)/60}); }
+function spawnBird(){ birds.push({x:-60, y:rand(60,160), speed: rand(120,220)/60, flap:0}); }
+function updateWorld(dt){
+  if(Math.random() < 0.008) spawnCloud();
+  if(Math.random() < 0.008) spawnBird();
+  for(let i=clouds.length-1;i>=0;i--){
+    clouds[i].x += clouds[i].speed * dt * 60;
+    if(clouds[i].x > W + 300) clouds.splice(i,1);
+  }
+  for(let i=birds.length-1;i>=0;i--){
+    birds[i].x += birds[i].speed * dt * 60;
+    birds[i].flap += dt * 16;
+    if(birds[i].x > W + 100) birds.splice(i,1);
+  }
+}
+
+// -------------------- Audio (WebAudio procedural) --------------------
+const AudioCtx = window.AudioContext || window.webkitAudioContext;
+const aCtx = new AudioCtx();
+let soundOn = true;
+const loopSources = {};
+async function playSound(name, opts={}){
+  if(!soundOn) return;
+  // if loop: use oscillator and track it
+  if(opts.loop){
+    if(loopSources[name]) return; // already playing
+    const o = aCtx.createOscillator();
+    const g = aCtx.createGain();
+    o.type = opts.type || 'sine';
+    o.frequency.value = opts.freq || 300;
+    g.gain.value = opts.volume || 0.02;
+    o.connect(g); g.connect(aCtx.destination);
+    o.start();
+    loopSources[name] = {o,g};
+    return;
+  }
+  const o = aCtx.createOscillator();
+  const g = aCtx.createGain();
+  o.connect(g); g.connect(aCtx.destination);
+  if(name === 'plant'){ o.frequency.value = 700; o.type='triangle'; g.gain.value = 0.06; }
+  if(name === 'water'){ o.frequency.value = 420; o.type='sine'; g.gain.value = 0.05; }
+  if(name === 'harvest'){ o.frequency.value = 520; o.type='sine'; g.gain.value = 0.07; }
+  if(name === 'coin'){ o.frequency.value = 920; o.type='sine'; g.gain.value = 0.08; }
+  if(name === 'pest'){ o.frequency.value = 220; o.type='sawtooth'; g.gain.value = 0.06; }
+  if(name === 'rain'){ o.frequency.value = 300; o.type='sine'; g.gain.value = 0.02; }
+  o.start();
+  g.gain.exponentialRampToValueAtTime(0.0001, aCtx.currentTime + (opts.dur || 0.18));
+  o.stop(aCtx.currentTime + (opts.dur || 0.2));
+}
+function stopLoop(name){
+  if(loopSources[name]){ try{ loopSources[name].o.stop(); }catch(e){} delete loopSources[name]; }
+}
+document.getElementById('btn-sound').addEventListener('click', ()=>{
+  soundOn = !soundOn;
+  document.getElementById('btn-sound').textContent = 'Sound: ' + (soundOn ? 'ON':'OFF');
+  if(!soundOn) stopLoop('rain');
+});
+window.addEventListener('pointerdown', ()=>{ if(aCtx.state === 'suspended') aCtx.resume(); }, {once:true});
+
+// -------------------- Input --------------------
+const keys = {};
+window.addEventListener('keydown', (e)=>{ keys[e.key.toLowerCase()] = true; handleHotkeys(e); });
+window.addEventListener('keyup', (e)=>{ keys[e.key.toLowerCase()] = false; });
+
+canvas.addEventListener('contextmenu', (ev)=>{ ev.preventDefault(); // pesticide aim: apply to nearest crop within radius
+  const r = canvas.getBoundingClientRect();
+  const mx = (ev.clientX - r.left) * (canvas.width / r.width), my = (ev.clientY - r.top) * (canvas.height / r.height);
+  // find nearest crop within 48px
+  let nearest = null, dist=9999;
+  for(const c of crops){ const d = Math.hypot(c.x - mx, c.y - my); if(d < dist){ dist = d; nearest = c; } }
+  if(nearest && dist < 60){
+    if(state.money >= 6){
+      state.money -= 6;
+      nearest.pest = false; nearest.health -= 8; spawnParticles('pesticide', nearest.x, nearest.y, 10);
+      playSound('pest');
+    } else alert('Need $6 for pesticide');
+    updateUI();
+  }
+});
+
+// Hotkeys for seed selection and actions
+function handleHotkeys(e){
+  if(e.key >= '1' && e.key <= '6'){ state.selectedSeed = parseInt(e.key); updateUI(); }
+  if(e.key === ' '){ state.paused = !state.paused; e.preventDefault(); }
+  if(e.key.toLowerCase() === 'f'){ // water at player pos
+    doWaterAtPlayer();
+  }
+  if(e.key.toLowerCase() === 'e'){ // plant or compost
+    if(e.shiftKey) doCompostAtPlayer(); else doPlantAtPlayer();
+  }
+  if(e.key.toLowerCase() === 'h'){ doHarvestNearby(); }
+  if(e.key.toLowerCase() === 's'){ soundOn = !soundOn; document.getElementById('btn-sound').textContent = 'Sound: ' + (soundOn? 'ON':'OFF'); }
+}
+
+// -------------------- Actions --------------------
+function doPlantAtPlayer(){
+  const px = player.x, py = player.y;
+  // don't plant if too close to another plant (space)
+  for(const c of crops) if(Math.hypot(c.x - px, c.y - py) < 20) return; // already plant there
+  if(state.money < 1) { flashMessage('Not enough money to plant ($1)'); return; }
+  state.money -= 1;
+  const crop = new Crop(px + rand(-6,6), py + rand(-6,6), state.selectedSeed);
+  crops.push(crop);
+  spawnParticles('plant', px, py, 16);
+  playSound('plant');
+  updateUI();
+}
+function doCompostAtPlayer(){
+  const px = player.x, py = player.y;
+  let nearest = null, dmin = 9999;
+  for(const c of crops){ const d = Math.hypot(c.x - px, c.y - py); if(d < dmin){ dmin = d; nearest = c; } }
+  if(!nearest || dmin > 48){ flashMessage('No crop in range to compost'); return; }
+  if(state.money < 2) { flashMessage('Not enough money for compost ($2)'); return; }
+  state.money -= 2; nearest.compost += 1; spawnParticles('compost', nearest.x, nearest.y, 10); playSound('coin'); updateUI();
+}
+function doWaterAtPlayer(){
+  const px = player.x, py = player.y;
+  let watered = 0;
+  for(const c of crops){
+    const d = Math.hypot(c.x - px, c.y - py);
+    if(d < 60){ c.water += 1; spawnParticles('water', c.x, c.y, 10); watered++; }
+  }
+  if(watered > 0) playSound('water');
+  else flashMessage('No crops in range to water');
+}
+function doHarvestNearby(){
+  let gained = 0;
+  for(let i=crops.length-1;i>=0;i--){
+    const c = crops[i];
+    const d = Math.hypot(c.x - player.x, c.y - player.y);
+    if(d < 80 && c.ready){
+      gained += c.harvest();
+      spawnParticles('harvest', c.x, c.y, 20);
+      crops.splice(i,1);
+    }
+  }
+  if(gained > 0) playSound('coin');
+  updateUI();
+}
+
+// -------------------- Particles & Utility --------------------
+function rand(a,b){ return a + Math.random()*(b-a); }
+function clamp(v,a,b){ return Math.max(a, Math.min(b,v)); }
+function formatMoney(v){ return '$' + (Math.round(v*10)/10).toFixed(1); }
+
+let messages = [];
+function flashMessage(txt, ttl=2000){ messages.push({txt, t:performance.now(), ttl}); }
+
+// -------------------- Achievements & Leaderboard --------------------
+let ACHS = {
+  firstHarvest: {title:'First Harvest', desc:'Harvest any crop once', done:false},
+  ecoHero: {title:'Eco Hero', desc:'Harvest 10 herbs', done:false},
+  cropMaster: {title:'Crop Master', desc:'Accumulate $1500 harvested', done:false},
+};
+function updateAchievements(){
+  if(state.herbsHarvested >= 10) ACHS.ecoHero.done = true;
+  if(state.totalHarvestValue >= 1500) ACHS.cropMaster.done = true;
+}
+function submitScore(){
+  const name = (document.getElementById('playerName') || {value:'Player'}).value || 'Player';
+  const score = Math.round(state.money + state.totalHarvestValue);
+  const lb = JSON.parse(localStorage.getItem(LB_KEY) || '[]');
+  lb.push({name: name.slice(0,20), score, ts: Date.now()});
+  lb.sort((a,b)=>b.score - a.score);
+  localStorage.setItem(LB_KEY, JSON.stringify(lb.slice(0,50)));
+  renderLeaderboard();
+  alert('Score submitted: ' + score);
+}
+document.getElementById('submitScore').addEventListener('click', submitScore);
+document.getElementById('clearLB').addEventListener('click', ()=>{ if(confirm('Clear leaderboard?')){ localStorage.removeItem(LB_KEY); renderLeaderboard(); }});
+function renderLeaderboard(){
+  const el = document.getElementById('leaderboard'); el.innerHTML = '';
+  const lb = JSON.parse(localStorage.getItem(LB_KEY) || '[]');
+  if(lb.length === 0){ el.innerHTML = '<div class="small">No scores yet</div>'; return; }
+  lb.slice(0,8).forEach((r,i)=>{ const d = document.createElement('div'); d.className = 'lb-item'; d.innerHTML = `<div>${i+1}. ${escapeHtml(r.name)}</div><div>${formatMoney(r.score)}</div>`; el.appendChild(d); });
+}
+function escapeHtml(s){ return String(s).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
+
+// -------------------- UI update --------------------
+function updateUI(){
+  moneyBadge.textContent = 'Money: ' + formatMoney(state.money);
+  dayBadge.textContent = 'Day: ' + state.day;
+  timeBadge.textContent = 'Time: ' + String(Math.floor(state.time)).padStart(2,'0') + ':00';
+  seasonBadge.textContent = 'Season: ' + SEASONS[state.seasonIndex];
+  seedBadge.textContent = 'Selected: [' + state.selectedSeed + '] ' + SEEDS[state.selectedSeed].name;
+  toolBadge.textContent = 'Tool: ' + state.tool;
+  renderCropList();
+  updateAchievements(); renderAchievements(); renderLeaderboard();
+}
+
+function renderCropList(){
+  const el = document.getElementById('cropList'); el.innerHTML = '';
+  for(const id in SEEDS){
+    const s = SEEDS[id];
+    const row = document.createElement('div'); row.style.display='flex'; row.style.justifyContent='space-between'; row.style.alignItems='center'; row.style.padding='6px'; row.style.borderRadius='8px'; row.style.background='linear-gradient(#fbfff7,#f2fff2)'; row.style.marginBottom='6px';
+    row.innerHTML = `<div><strong>[${id}] ${s.name}</strong><div class="small">Grow ${s.baseGrow}s • Water ${s.waterNeed} • Yield ${s.yield}</div></div>
+      <div style="display:flex;gap:6px"><button onclick="selectSeed(${id})">Select</button><button onclick="plantAtCenter(${id})" class="alt">Plant</button></div>`;
+    el.appendChild(row);
+  }
+}
+window.selectSeed = function(id){ state.selectedSeed = id; updateUI(); };
+window.plantAtCenter = function(id){ state.selectedSeed = id; player.x = W/2; player.y = H/2 + 80; doPlantAtPlayer(); };
+
+// Achievements render
+function renderAchievements(){
+  const el = document.getElementById('achList'); el.innerHTML = '';
+  for(const k in ACHS){
+    const a = ACHS[k];
+    const div = document.createElement('div'); div.className='ach'; div.style.opacity = a.done? '1':'0.55'; div.innerHTML = `<strong>${a.title}</strong><div class="small">${a.desc}</div>`;
+    el.appendChild(div);
+  }
+}
+
+// -------------------- Save/Load --------------------
+function saveGame(){
+  const data = { state, crops: crops.map(c=>({x:c.x,y:c.y,seedId:c.seedId,plantTs:c.plantTs,growth:c.growth,water:c.water,compost:c.compost,health:c.health,pest:c.pest,ready:c.ready})) };
+  localStorage.setItem(SAVE_KEY, JSON.stringify(data));
+  flashMessage('Saved');
+}
+function loadGame(){
+  try{
+    const raw = localStorage.getItem(SAVE_KEY);
+    if(!raw) return;
+    const d = JSON.parse(raw);
+    state = Object.assign(state, d.state || {});
+    if(d.crops){ crops.length=0; for(const s of d.crops) { const c = new Crop(s.x,s.y,s.seedId); c.plantTs = s.plantTs || performance.now()/1000; c.water = s.water; c.compost = s.compost; c.health = s.health; c.pest = s.pest; c.ready = s.ready; crops.push(c); } }
+  }catch(e){ console.warn('load fail', e); }
+}
+document.getElementById('btn-save').addEventListener('click', ()=>{ saveGame(); alert('Saved locally'); });
+setInterval(()=> saveGame(), 10000);
+loadGame();
+updateUI();
+
+// -------------------- Draw Helpers --------------------
+function draw(){
+  // sky
+  const season = SEASONS[state.seasonIndex];
+  let skyTop = '#dff3e6', skyBot = '#f7fff6';
+  if(season==='Summer'){ skyTop='#dff7ff'; skyBot='#f6fbff'; }
+  if(season==='Autumn'){ skyTop='#f6efe6'; skyBot='#fff7f0'; }
+  if(season==='Winter'){ skyTop='#e9f0ff'; skyBot='#f4f8ff'; }
+  const g = ctx.createLinearGradient(0,0,0,180); g.addColorStop(0,skyTop); g.addColorStop(1,skyBot);
+  ctx.fillStyle = g; ctx.fillRect(0,0,W,180);
+
+  // sun
+  const sunX = 80 + (state.time/24) * 240;
+  const sunY = 60 + Math.cos((state.time/24)*Math.PI*2) * 28;
+  ctx.beginPath(); ctx.fillStyle = (state.time > 18 || state.time < 6) ? '#eef3ff' : '#ffd843'; ctx.arc(sunX, sunY, 32, 0, Math.PI*2); ctx.fill();
+
+  // clouds
+  for(const c of clouds) drawCloud(c);
+
+  // distant hills
+  ctx.fillStyle = '#cfe9d0'; ctx.beginPath(); ctx.moveTo(0,160); ctx.quadraticCurveTo(240,40,520,160); ctx.quadraticCurveTo(840,10,1200,160); ctx.lineTo(W,0); ctx.lineTo(0,0); ctx.fill();
+
+  // field ground
+  ctx.fillStyle = '#d6cdbf'; ctx.fillRect(0,170,W,H);
+
+  // draw crops
+  for(const c of crops) drawCrop(c);
+
+  // draw particles
+  for(const p of particles) drawParticle(p);
+
+  // draw birds
+  for(const b of birds) drawBird(b);
+
+  // draw player
+  drawPlayer();
+
+  // rain overlay
+  if(weather.rain) drawRain();
+
+  // HUD messages
+  drawMessages();
+
+  // night overlay if needed
+  if(state.time < 6 || state.time > 18){
+    ctx.fillStyle = 'rgba(6,10,26,0.12)'; ctx.fillRect(0,0,W,H);
+  }
+}
+
+function drawCloud(c){
+  ctx.fillStyle = 'rgba(255,255,255,0.94)';
+  ctx.beginPath();
+  ctx.ellipse(c.x + c.w*0.2, c.y, c.w*0.36, c.w*0.22, 0, 0, Math.PI*2);
+  ctx.ellipse(c.x + c.w*0.5, c.y - c.w*0.06, c.w*0.5, c.w*0.24, 0, 0, Math.PI*2);
+  ctx.ellipse(c.x + c.w*0.8, c.y, c.w*0.32, c.w*0.2, 0, 0, Math.PI*2);
+  ctx.fill();
+}
+
+function drawBird(b){
+  ctx.save(); ctx.translate(b.x, b.y); ctx.rotate(Math.sin(b.flap)*0.15); ctx.fillStyle='#2b2b2b';
+  ctx.beginPath(); ctx.moveTo(-12,0); ctx.quadraticCurveTo(-4,-8,0,0); ctx.quadraticCurveTo(-4,8,-12,0); ctx.fill(); ctx.restore();
+}
+
+function drawCrop(c){
+  if(c.dead) return;
+  // soil whisper shadow
+  ctx.fillStyle = 'rgba(0,0,0,0.06)';
+  ctx.beginPath(); ctx.ellipse(c.x, c.y + 10, c.radius + 6, 6, 0,0,Math.PI*2); ctx.fill();
+  // plant stem + canopy
+  const seed = SEEDS[c.seedId];
+  ctx.strokeStyle = '#254e24'; ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.moveTo(c.x, c.y + c.radius); ctx.lineTo(c.x, c.y); ctx.stroke();
+  ctx.fillStyle = seed.color; ctx.beginPath(); ctx.arc(c.x, c.y - c.radius*0.2, c.radius, 0, Math.PI*2); ctx.fill();
+
+  // pest icon
+  if(c.pest){ ctx.fillStyle = '#000'; ctx.beginPath(); ctx.arc(c.x + c.radius + 6, c.y - c.radius - 6, 7, 0, Math.PI*2); ctx.fill(); ctx.fillStyle = '#ff4d4d'; ctx.font = '12px sans-serif'; ctx.fillText('!', c.x + c.radius + 3, c.y - c.radius - 3); }
+  // health
+  ctx.fillStyle = '#444'; ctx.fillRect(c.x - 20, c.y + c.radius + 8, 40, 6); ctx.fillStyle = '#50c84a'; ctx.fillRect(c.x - 20, c.y + c.radius + 8, 40 * (c.health/100), 6);
+  // ready glow
+  if(c.ready){ ctx.strokeStyle = 'rgba(255,255,200,0.6)'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(c.x, c.y - c.radius*0.2, c.radius + 8, 0, Math.PI*2); ctx.stroke(); }
+}
+
+function drawParticle(p){
+  ctx.beginPath(); ctx.fillStyle = p.color; ctx.arc(p.x, p.y, p.size, 0, Math.PI*2); ctx.fill();
+}
+
+function drawPlayer(){
+  ctx.save(); ctx.translate(player.x, player.y);
+  // shadow
+  ctx.fillStyle = 'rgba(0,0,0,0.12)'; ctx.beginPath(); ctx.ellipse(0, 14, 22, 8, 0, 0, Math.PI*2); ctx.fill();
+  // body
+  ctx.fillStyle = '#4f8e4f'; ctx.fillRect(-8, -10, 16, 24);
+  // head
+  ctx.beginPath(); ctx.fillStyle = '#ffd9b6'; ctx.arc(0, -16, 8, 0, Math.PI*2); ctx.fill();
+  // hat
+  ctx.fillStyle = '#8b4a2b'; ctx.fillRect(-10, -22, 20, 6);
+  ctx.restore();
+}
+
+function drawRain(){
+  ctx.strokeStyle = 'rgba(120,160,200,0.5)';
+  for(let i=0;i<120;i++){ const x = rand(0, W), y = rand(160, H); ctx.beginPath(); ctx.moveTo(x,y); ctx.lineTo(x+2,y+10); ctx.stroke(); }
+}
+
+function drawMessages(){
+  const now = performance.now();
+  for(let i=0;i<messages.length;i++){
+    const m = messages[i];
+    const age = now - m.t;
+    if(age > m.ttl) { messages.splice(i,1); i--; continue; }
+    ctx.fillStyle = 'rgba(0,0,0,0.7)'; ctx.font = '14px sans-serif';
+    ctx.fillText(m.txt, 16, 200 + i*20);
+  }
+}
+
+// -------------------- Main Loop --------------------
+let last = performance.now();
+function loop(ts){
+  const dt = Math.min(0.05, (ts - last)/1000); last = ts;
+  if(!state.paused){
+    // player movement
+    handleMovement(dt);
+    // update crops
+    for(let i=crops.length-1;i>=0;i--){
+      const c = crops[i];
+      c.update(dt, weather.rain);
+      if(c.dead){ // show a little particle
+        spawnParticles('harvest', c.x, c.y, 8); crops.splice(i,1);
+      }
+    }
+    updateParticles(dt); updateWorld(dt);
+    // time advance
+    state.time += dt * 0.12 * (1 + (state.upgradeLevel||0)*0.02);
+    if(state.time >= 24){ state.time -= 24; state.day += 1; if(state.day % 7 === 0) nextSeason(); state.money -= (1 + Math.floor(state.day/40)); }
+    updateWeather(performance.now()/1000);
+    // random birds cleaning pests sometimes
+    if(Math.random() < 0.0008){ for(const c of crops) if(Math.random() < 0.02) c.pest = false; }
+  }
+  // render
+  ctx.clearRect(0,0,W,H);
+  draw();
+  updateUI();
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+
+// -------------------- Movement & Input handling --------------------
+function handleMovement(dt){
+  let vx=0, vy=0;
+  if(keys['arrowleft'] || keys['a']) vx = -1;
+  if(keys['arrowright'] || keys['d']) vx = 1;
+  if(keys['arrowup'] || keys['w']) vy = -1;
+  if(keys['arrowdown'] || keys['s']) vy = 1;
+  if(vx !== 0 && vy !== 0){ vx *= Math.SQRT1_2; vy *= Math.SQRT1_2; }
+  player.x += vx * player.speed * dt;
+  player.y += vy * player.speed * dt;
+  player.x = clamp(player.x, 30, W-30); player.y = clamp(player.y, 160, H-30);
+}
+
+// -------------------- Small helpers --------------------
+function spawnParticles(type,x,y,count=12){
+  spawnParticles; // alias existence
+  spawnParticlesInternal(type,x,y,count);
+}
+function spawnParticlesInternal(type,x,y,count=12){
+  for(let i=0;i<count;i++) particles.push({type, x: x + rand(-6,6), y: y + rand(-6,6), vx: rand(-160,160)/60, vy: rand(-260,-40)/60, life: rand(0.6,1.6), size: rand(2,4), color: (type==='water'?'rgba(90,140,230,0.9)':'#fff2c3')});
+}
+
+// -------------------- UI helpers (messages) --------------------
+function flashMessage(msg){
+  messages.push({txt: msg, t: performance.now(), ttl: 2200});
+}
+
+// -------------------- Misc initial UI & data --------------------
+renderCropList(); renderAchievements(); renderLeaderboard();
+updateUI();
+
+// expose some helpers to console for testing
+window.saveGame = saveGame;
+window.loadGame = loadGame;
+window.addMoney = (v)=>{ state.money += v; updateUI(); };
+
+</script>
+</body>
+</html>
