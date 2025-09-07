@@ -34,9 +34,7 @@ Open the sustainable_farm.html file in your browser:
 
 bash
 
-open sustainable_farm.html # macOS
-
-start sustainable_farm.html # Windows
+https://github.com/aadhirai718/Week-2/blob/main/sustainable_farm.html # Windows
 
 
 
@@ -48,6 +46,7 @@ start sustainable_farm.html # Windows
 - Save and your game will be live at:
 
 https://github.com/aadhirai718/sustainable-farm-game/
+https://github.com/aadhirai718/Week-2/blob/main/sustainable_farm.html
 
 
 
